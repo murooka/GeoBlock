@@ -24,14 +24,14 @@ class Block(val color:Int) {
 
 class GameField(val width:Int, val height:Int, val colorCount:Int) {
   val random = new Random
-  val _blocks : Array[Array[Block]] = Array.ofDim[Block](width,height)
-  for (w <- 0 until width; h <- 0 until height) {
+  val _blocks : Array[Array[Block]] = Array.ofDim[Block](width,height*2)
+  for (w <- 0 until width; h <- 0 until height*2) {
     if (w>=2 || h>=2) {
       var flag = true
       while (flag) {
         val c = random.nextInt(colorCount) + 1
-        val hflag = w<=2 || !(_blocks(w-1)(h).color==c && _blocks(w-2)(h).color==c)
-        val vflag = h<=2 || !(_blocks(w)(h-1).color==c && _blocks(w)(h-2).color==c)
+        val hflag = w<2 || !(_blocks(w-1)(h).color==c && _blocks(w-2)(h).color==c)
+        val vflag = h<2 || !(_blocks(w)(h-1).color==c && _blocks(w)(h-2).color==c)
         if (hflag && vflag) {
           _blocks(w)(h) = new Block(c)
           flag = false
@@ -47,12 +47,6 @@ class GameField(val width:Int, val height:Int, val colorCount:Int) {
   def blocks(bp:Point) : Block = _blocks(bp.x)(bp.y)
   def setBlock(bx:Int, by:Int, b:Block) = _blocks(bx)(by) = b
   def setBlock(bp:Point,b:Block) = _blocks(bp.x)(bp.y) = b
-
-
-
-  def isDeadlock : Boolean = {
-    false
-  }
 
 
   val events = new ArrayBuffer[Event]
@@ -121,7 +115,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
 
   def paintField(g:Graphics) = {
     for (bx <- 0 until field.width) {
-      for (by<- 0 until field.height) {
+      for (by<- field.height until field.height*2) {
         val block = field.blocks(bx,by)
         if (block.fixed && block.color!=Block.None) paintFixedBlock(g, bx, by)
         if (focused==Point(bx,by)) paintSelectedBlock(g, bx, by)
@@ -132,13 +126,15 @@ class GameUI(val field:GameField) extends GeoBlockUI {
   def paintFixedBlock(g:Graphics, bx:Int, by:Int) = {
     assert(field.blocks(bx,by).color!=Block.None)
     val color = colors(field.blocks(bx,by).color)
-    paintBlock(g, color, blockWidth*bx, blockHeight*by, blockWidth, blockHeight)
+    val pos = bpos2pos(Point(bx,by))
+    paintBlock(g, color, pos.x, pos.y, blockWidth, blockHeight)
   }
 
   def paintSelectedBlock(g:Graphics, bx:Int, by:Int) = {
     assert(field.blocks(bx,by).color!=Block.None)
-    val color = new Color(255,255,255,191)
-    paintBlock(g, color, blockWidth*bx, blockHeight*by, blockWidth, blockHeight)
+    val color = new Color(255,255,255,91)
+    val pos = bpos2pos(Point(bx,by))
+    paintBlock(g, color, pos.x, pos.y, blockWidth, blockHeight)
   }
 
   def paintBlock(g:Graphics, color:Color, x:Int, y:Int, w:Int, h:Int) : Unit = {
@@ -152,6 +148,24 @@ class GameUI(val field:GameField) extends GeoBlockUI {
     g.fillRect(x+6, y+6, w-12, h-12)
   }
 
+
+  def bpos2pos(bpos:Point) : Point = {
+    val x = bpos.x * blockWidth
+    val y = (bpos.y-field.height) * blockHeight
+    Point(x,y)
+  }
+
+  def pos2bpos(pos:Point) : Point = {
+    val fieldWidth = field.width * blockWidth
+    val fieldHeight = field.height * blockHeight
+    if (pos.x < 0 || fieldWidth <= pos.x || pos.y < 0 || fieldHeight <= pos.y) {
+      null
+    } else {
+      val bx = pos.x / blockWidth
+      val by = (pos.y + fieldHeight) / blockHeight
+      Point(bx,by)
+    }
+  }
 
 
   class ChangeEvent(val src:Point, val dst:Point, rechange:Boolean=true) extends Event {
@@ -169,7 +183,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
 
       def checkBlock(pos:Point, vec:Point) : ArrayBuffer[Point] = {
         val newPos = pos + vec
-        if (newPos.x<0 || newPos.y<0 || newPos.x>=field.width || newPos.y>=field.height) {
+        if (newPos.x<0 || field.width <= newPos.x || newPos.y < field.height || field.height*2 <= newPos.y) {
           ArrayBuffer.empty[Point]
         } else if (field.blocks(newPos).color!=color) {
           ArrayBuffer.empty[Point]
@@ -191,29 +205,6 @@ class GameUI(val field:GameField) extends GeoBlockUI {
       } else {
         Array.empty[Point]
       }
-    }
-
-
-    def isLined(pos:Point) = {
-      val color = field.blocks(pos).color
-
-      def countBlock(pos:Point, vec:Point) : Int = {
-        val newPos = pos + vec
-        if (newPos.x<0 || newPos.y<0 || newPos.x>=field.width || newPos.y>=field.height) {
-          0
-        } else if (field.blocks(newPos).color!=color) {
-          0
-        } else if (!field.blocks(newPos).fixed) {
-          0
-        } else {
-          1 + countBlock(newPos, vec)
-        }
-      }
-
-      val vertical = 1 + countBlock(pos, Point(0,1)) + countBlock(pos, Point(0,-1))
-      val horizontal = 1 + countBlock(pos, Point(1,0)) + countBlock(pos, Point(-1,0))
-      
-      vertical >= 3 || horizontal >= 3
     }
 
     def elapsed(time:Float) = {
@@ -258,9 +249,10 @@ class GameUI(val field:GameField) extends GeoBlockUI {
       val bx = src.x
       val by = src.y
       assert(field.blocks(bx,by).color!=Block.None)
-      val pos = (1.0 * counter / countMax)
-      val x = bx * blockWidth + (pos * blockWidth * vx).toInt
-      val y = by * blockHeight + (pos * blockHeight * vy).toInt
+      val offset = (1.0 * counter / countMax)
+      val pos = bpos2pos(Point(bx,by))
+      val x = pos.x + (offset * blockWidth * vx).toInt
+      val y = pos.y + (offset * blockHeight * vy).toInt
       val w = blockWidth
       val h = blockHeight
       val color = colors(field.blocks(bx,by).color)
@@ -271,9 +263,10 @@ class GameUI(val field:GameField) extends GeoBlockUI {
       val bx = dst.x
       val by = dst.y
       assert(field.blocks(bx,by).color!=Block.None)
-      val pos = - (1.0 * counter / countMax)
-      val x = bx * blockWidth + (pos * blockWidth * vx).toInt
-      val y = by * blockHeight + (pos * blockHeight * vy).toInt
+      val offset = - (1.0 * counter / countMax)
+      val pos = bpos2pos(Point(bx,by))
+      val x = pos.x + (offset * blockWidth * vx).toInt
+      val y = pos.y + (offset * blockHeight * vy).toInt
       val w = blockWidth
       val h = blockHeight
       val color = colors(field.blocks(bx,by).color)
@@ -326,8 +319,9 @@ class GameUI(val field:GameField) extends GeoBlockUI {
 
     def paintFallingBlock(g:Graphics, bx:Int, by:Int) = {
       assert(field.blocks(bx,by).color!=Block.None)
-      val x = bx * blockWidth
-      val y = by * blockHeight + counter
+      val pos = bpos2pos(Point(bx,by))
+      val x = pos.x
+      val y = pos.y + counter
       val w = blockWidth
       val h = blockHeight
       val color = colors(field.blocks(bx,by).color)
@@ -344,22 +338,25 @@ class GameUI(val field:GameField) extends GeoBlockUI {
       case MousePressed(source, point, modifiers, clicks, triggersPopup) => {
         val fieldRect = new Rectangle(fieldOffsetX, fieldOffsetY, fieldWidth, fieldHeight)
         if (fieldRect.contains(point)) {
-          val bx = (point.x-fieldOffsetX) / blockWidth
-          val by = (point.y-fieldOffsetY) / blockHeight
-          val block = field.blocks(bx,by)
-          if (block.fixed && block.color!=Block.None) focused = Point(bx, by)
+          val x = point.x - fieldOffsetX
+          val y = point.y - fieldOffsetY
+          println(x + ":" + y)
+          val bpos = pos2bpos(Point(x,y))
+          val block = field.blocks(bpos)
+          if (block.fixed && block.color!=Block.None) focused = bpos
         }
       }
       case MouseReleased(source, point, modifiers, clicks, triggersPopup) => {
         val fieldRect = new Rectangle(fieldOffsetX, fieldOffsetY, fieldWidth, fieldHeight)
         if (fieldRect.contains(point) && focused!=null) {
-          val bx = (point.x-fieldOffsetX) / blockWidth
-          val by = (point.y-fieldOffsetY) / blockHeight
-          val diffX = abs(bx-focused.x)
-          val diffY = abs(by-focused.y)
-          val block = field.blocks(bx,by)
+          val x = point.x - fieldOffsetX
+          val y = point.y - fieldOffsetY
+          val bpos = pos2bpos(Point(x,y))
+          val diffX = abs(bpos.x-focused.x)
+          val diffY = abs(bpos.y-focused.y)
+          val block = field.blocks(bpos)
           if (diffX+diffY==1 && block.fixed && block.color!=Block.None) {
-            field.events += new ChangeEvent(focused, Point(bx, by))
+            field.events += new ChangeEvent(focused, bpos)
           }
           focused = null
         }
