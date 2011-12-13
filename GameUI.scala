@@ -1,11 +1,11 @@
 package jp.egen.yaguchi.geoblock
 
-import jp.egen.yaguchi.game.{UI,Point}
+import jp.egen.yaguchi.game.{UI,Point,Look}
 import scala.math._
 import scala.util.{Random}
-import scala.collection.mutable.{ArrayBuffer}
+import scala.collection.mutable.{ListBuffer}
 import scala.swing.event.{InputEvent,MousePressed,MouseReleased}
-import java.awt.{Graphics,Color,Rectangle}
+import java.awt.{Dimension,Graphics,Color,Rectangle}
 
 object Block {
   val None = 0
@@ -18,27 +18,70 @@ object Block {
   val Orange = 7
 }
 
-class Block(val color:Int) {
+class Block(var kind:Int) {
   var fixed : Boolean = true
+
+
+  val look = new Look {
+
+    val size = new Dimension(40,40)
+
+    val color : Color = kind match {
+      case Block.Red => Color.RED
+      case Block.Green => Color.GREEN
+      case Block.Blue => Color.BLUE
+      case Block.Cyan => Color.CYAN
+      case Block.Magenta => Color.MAGENTA
+      case Block.Yellow => Color.YELLOW
+      case Block.Orange => Color.ORANGE
+      case _ => Color.BLACK
+    }
+
+    def draw(g:Graphics, x:Int, y:Int) : Unit = {
+      g.clearRect(x, y, width, height)
+
+      g.setColor(color)
+      g.fillRect(      x+2,        y+2,  width-4,         2)
+      g.fillRect(      x+2,        y+2,        2,  height-4)
+      g.fillRect(      x+2, y+height-4,  width-4,         2)
+      g.fillRect(x+width-4,        y+2,        2 , height-4)
+      g.fillRect(      x+6,        y+6, width-12, height-12)
+    }
+
+
+  }
+
+  override def toString = kind match {
+    case Block.None => "None"
+    case Block.Red => "Red"
+    case Block.Green => "Green"
+    case Block.Blue => "Blue"
+    case Block.Cyan => "Cyan"
+    case Block.Magenta => "Magenta"
+    case Block.Yellow => "Yellow"
+    case Block.Orange => "Orange"
+    case _ => "Unknown"
+  }
+
 }
 
-class GameField(val width:Int, val height:Int, val colorCount:Int) {
+class GameField(val width:Int, val height:Int, val kindCount:Int) {
   val random = new Random
   val _blocks : Array[Array[Block]] = Array.ofDim[Block](width,height*2)
   for (w <- 0 until width; h <- 0 until height*2) {
     if (w>=2 || h>=2) {
       var flag = true
       while (flag) {
-        val c = random.nextInt(colorCount) + 1
-        val hflag = w<2 || !(_blocks(w-1)(h).color==c && _blocks(w-2)(h).color==c)
-        val vflag = h<2 || !(_blocks(w)(h-1).color==c && _blocks(w)(h-2).color==c)
+        val c = random.nextInt(kindCount) + 1
+        val hflag = w<2 || !(_blocks(w-1)(h).kind==c && _blocks(w-2)(h).kind==c)
+        val vflag = h<2 || !(_blocks(w)(h-1).kind==c && _blocks(w)(h-2).kind==c)
         if (hflag && vflag) {
           _blocks(w)(h) = new Block(c)
           flag = false
         }
       }
     } else {
-      val c = random.nextInt(colorCount) + 1
+      val c = random.nextInt(kindCount) + 1
       _blocks(w)(h) = new Block(c)
     }
   }
@@ -48,8 +91,21 @@ class GameField(val width:Int, val height:Int, val colorCount:Int) {
   def setBlock(bx:Int, by:Int, b:Block) = _blocks(bx)(by) = b
   def setBlock(bp:Point,b:Block) = _blocks(bp.x)(bp.y) = b
 
+  def fallColumn(bp:Point) = {
+    val column = _blocks(bp.x).toList
+    val fallen = column.takeWhile(_.kind!=Block.None) ++ column.dropWhile(_.kind!=Block.None).dropWhile(_.kind==Block.None)
+    val len = fallen.length
+    val shortage = height * 2 - len
+    val full = Array.tabulate[Block](shortage) { (_) => new Block(random.nextInt(kindCount) + 1) }.toList ++ fallen
 
-  val events = new ArrayBuffer[Event]
+    for (b <- full) b.fixed = true
+    _blocks(bp.x) = full.toArray
+
+  }
+
+
+
+  val events = new ListBuffer[Event]
 }
 
 
@@ -117,21 +173,21 @@ class GameUI(val field:GameField) extends GeoBlockUI {
     for (bx <- 0 until field.width) {
       for (by<- field.height until field.height*2) {
         val block = field.blocks(bx,by)
-        if (block.fixed && block.color!=Block.None) paintFixedBlock(g, bx, by)
+        if (block.fixed && block.kind!=Block.None) paintFixedBlock(g, bx, by)
         if (focused==Point(bx,by)) paintSelectedBlock(g, bx, by)
       }
     }
   }
 
   def paintFixedBlock(g:Graphics, bx:Int, by:Int) = {
-    assert(field.blocks(bx,by).color!=Block.None)
-    val color = colors(field.blocks(bx,by).color)
+    assert(field.blocks(bx,by).kind!=Block.None)
+    val kind = colors(field.blocks(bx,by).kind)
     val pos = bpos2pos(Point(bx,by))
-    paintBlock(g, color, pos.x, pos.y, blockWidth, blockHeight)
+    paintBlock(g, kind, pos.x, pos.y, blockWidth, blockHeight)
   }
 
   def paintSelectedBlock(g:Graphics, bx:Int, by:Int) = {
-    assert(field.blocks(bx,by).color!=Block.None)
+    assert(field.blocks(bx,by).kind!=Block.None)
     val color = new Color(255,255,255,91)
     val pos = bpos2pos(Point(bx,by))
     paintBlock(g, color, pos.x, pos.y, blockWidth, blockHeight)
@@ -178,32 +234,32 @@ class GameUI(val field:GameField) extends GeoBlockUI {
     var counter = 0
     val countMax = 20
 
-    def getLinedBlocks(pos:Point) : Array[Point] = {
-      val color = field.blocks(pos).color
+    def getLinedBlocks(pos:Point) : List[Point] = {
+      val kind = field.blocks(pos).kind
 
-      def checkBlock(pos:Point, vec:Point) : ArrayBuffer[Point] = {
+      def checkBlock(pos:Point, vec:Point) : ListBuffer[Point] = {
         val newPos = pos + vec
         if (newPos.x<0 || field.width <= newPos.x || newPos.y < field.height || field.height*2 <= newPos.y) {
-          ArrayBuffer.empty[Point]
-        } else if (field.blocks(newPos).color!=color) {
-          ArrayBuffer.empty[Point]
+          ListBuffer.empty[Point]
+        } else if (field.blocks(newPos).kind!=kind) {
+          ListBuffer.empty[Point]
         } else {
           checkBlock(newPos, vec) += newPos
         }
       }
 
 
-      val varLine = (checkBlock(pos, Point(0,1)) ++ checkBlock(pos, Point(0,-1))).toArray
-      val horLine = (checkBlock(pos, Point(1,0)) ++ checkBlock(pos, Point(-1,0))).toArray
+      val varLine = (checkBlock(pos, Point(0,1)) ++ checkBlock(pos, Point(0,-1))).toList
+      val horLine = (checkBlock(pos, Point(1,0)) ++ checkBlock(pos, Point(-1,0))).toList
 
       if (varLine.size>=2 && horLine.size>=2) {
-        varLine ++ horLine ++ Array(pos)
+        varLine ++ horLine ++ List(pos)
       } else if (varLine.size>=2) {
-        varLine ++ Array(pos)
+        varLine ++ List(pos)
       } else if (horLine.size>=2) {
-        horLine ++ Array(pos)
+        horLine ++ List(pos)
       } else {
-        Array.empty[Point]
+        List.empty[Point]
       }
     }
 
@@ -248,83 +304,100 @@ class GameUI(val field:GameField) extends GeoBlockUI {
     private def paintSrc(g:Graphics) = {
       val bx = src.x
       val by = src.y
-      assert(field.blocks(bx,by).color!=Block.None)
+      assert(field.blocks(bx,by).kind!=Block.None)
       val offset = (1.0 * counter / countMax)
       val pos = bpos2pos(Point(bx,by))
       val x = pos.x + (offset * blockWidth * vx).toInt
       val y = pos.y + (offset * blockHeight * vy).toInt
       val w = blockWidth
       val h = blockHeight
-      val color = colors(field.blocks(bx,by).color)
+      val color = colors(field.blocks(bx,by).kind)
       paintBlock(g, color, x, y, w, h)
     }
 
     private def paintDst(g:Graphics) = {
       val bx = dst.x
       val by = dst.y
-      assert(field.blocks(bx,by).color!=Block.None)
+      assert(field.blocks(bx,by).kind!=Block.None)
       val offset = - (1.0 * counter / countMax)
       val pos = bpos2pos(Point(bx,by))
       val x = pos.x + (offset * blockWidth * vx).toInt
       val y = pos.y + (offset * blockHeight * vy).toInt
       val w = blockWidth
       val h = blockHeight
-      val color = colors(field.blocks(bx,by).color)
+      val color = colors(field.blocks(bx,by).kind)
       paintBlock(g, color, x, y, w, h)
     }
   
   }
 
-  class EraseEvent(targets:Array[Point]) extends Event {
+  class EraseEvent(targets:List[Point]) extends Event {
 
     for (t <- targets) {
       val block = new Block(Block.None)
       block.fixed = false
       field.setBlock(t, block)
     }
-    val bottoms = targets.filter { (p:Point) =>
+
+    var bottoms = targets.filter { (p:Point) =>
       val above = p - Point(0,1)
       if (above.y < 0) {
         false
       } else {
-        field.blocks(above).color!=Block.None
+        field.blocks(above).kind!=Block.None
       }
+    }.map { (p:Point) =>
+      p - Point(0,1)
     }
-    val fallings = bottoms.flatMap { (p:Point) =>
-      val buffer = new ArrayBuffer[Point]
-      var pos = p - Point(0,1)
-      while (pos.y >= 0 && field.blocks(pos).color!=Block.None) {
-        buffer += pos
-        pos = pos - Point(0,1)
-      }
-      buffer.toList
-    }.toArray
-    for (p <- fallings) field.blocks(p).fixed = false
+
+    for (bp <- fallingBlocks(bottoms)) field.blocks(bp).fixed = false
+
+    def fallingBlocks(bottomList:List[Point]) : List[Point] = {
+      bottomList.flatMap { (p:Point) =>
+        val buffer = new ListBuffer[Point]
+        var pos = p
+        while (pos.y >= 0 && field.blocks(pos).kind!=Block.None) {
+          buffer += pos
+          pos = pos - Point(0,1)
+        }
+        buffer.toList
+      }.toList
+    }
 
     var counter = 0
+
+    def offset = counter * 3
 
     def elapsed(time:Float) : Unit = {
       counter += 1
     }
 
     def ended : Boolean = {
-      false
+      val landings = bottoms.filter { (bp:Point) =>
+        val pos = bpos2pos(bp+Point(0,1))
+        val fallpos = pos + Point(0, offset)
+        val fallbpos = pos2bpos(fallpos)
+        if (fallbpos==null || field.blocks(fallbpos).kind!=Block.None) true else false
+      }
+      for (p <- landings) field.fallColumn(p)
+      bottoms = bottoms -- landings
+      bottoms.isEmpty
     }
 
     def paint(g:Graphics) : Unit = {
-      for (p <- fallings) {
+      for (p <- fallingBlocks(bottoms)) {
         paintFallingBlock(g, p.x, p.y)
       }
     }
 
     def paintFallingBlock(g:Graphics, bx:Int, by:Int) = {
-      assert(field.blocks(bx,by).color!=Block.None)
+      assert(field.blocks(bx,by).kind!=Block.None)
       val pos = bpos2pos(Point(bx,by))
       val x = pos.x
-      val y = pos.y + counter
+      val y = pos.y + offset
       val w = blockWidth
       val h = blockHeight
-      val color = colors(field.blocks(bx,by).color)
+      val color = colors(field.blocks(bx,by).kind)
       paintBlock(g, color, x, y, w, h)
     }
 
@@ -343,7 +416,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
           println(x + ":" + y)
           val bpos = pos2bpos(Point(x,y))
           val block = field.blocks(bpos)
-          if (block.fixed && block.color!=Block.None) focused = bpos
+          if (block.fixed && block.kind!=Block.None) focused = bpos
         }
       }
       case MouseReleased(source, point, modifiers, clicks, triggersPopup) => {
@@ -355,7 +428,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
           val diffX = abs(bpos.x-focused.x)
           val diffY = abs(bpos.y-focused.y)
           val block = field.blocks(bpos)
-          if (diffX+diffY==1 && block.fixed && block.color!=Block.None) {
+          if (diffX+diffY==1 && block.fixed && block.kind!=Block.None) {
             field.events += new ChangeEvent(focused, bpos)
           }
           focused = null

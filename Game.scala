@@ -82,6 +82,30 @@ abstract class UI {
   def input(ie:InputEvent) : Unit
 }
 
+
+abstract class Look {
+  import java.awt.{Image,Graphics,Dimension}
+  import java.awt.image.BufferedImage
+
+  val size : Dimension
+  def width : Int = size.width
+  def height : Int = size.height
+
+  def draw(g:Graphics, p:Point) : Unit = draw(g, p.x, p.y)
+  def draw(g:Graphics) : Unit = draw(g, 0, 0)
+  def draw(g:Graphics, x:Int, y:Int) : Unit
+
+  def image : Image = {
+    val imageType = BufferedImage.TYPE_4BYTE_ABGR
+    val img = new BufferedImage(width, height, imageType)
+    val g = img.getGraphics
+    g.clearRect(0, 0, width, height)
+    draw(g)
+    img
+  }
+}
+
+
 object Point {
   
   val origin = new Point(0, 0)
