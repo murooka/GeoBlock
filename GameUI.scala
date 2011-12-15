@@ -9,17 +9,30 @@ import java.awt.{Dimension,Graphics,Color,Rectangle}
 
 object Block {
   val None = new Block(0)
-  val Red = new Block(1)
-  val Green = new Block(2)
-  val Blue = new Block(3)
-  val Cyan = new Block(4)
-  val Magenta = new Block(5)
-  val Yellow = new Block(6)
-  val Orange = new Block(7)
+  private val Red = new Block(1)
+  private val Green = new Block(2)
+  private val Blue = new Block(3)
+  private val Cyan = new Block(4)
+  private val Magenta = new Block(5)
+  private val Yellow = new Block(6)
+  private val Orange = new Block(7)
+
+  val look = None.look
+
+  private val r = new Random
+  /**
+   * return random Block expect "rejects"
+   */
+  def random(count:Int, rejects:List[Block] = List()) = {
+    val blocks = List(Red,Green,Blue,Cyan,Magenta,Yellow,Orange).take(count).filterNot(rejects.contains)
+    val index = r.nextInt(blocks.size)
+    blocks(index).clone
+  }
 
 }
 
-case class Block(var kind:Int) {
+@cloneable
+class Block(val kind:Int) {
   self =>
 
   var fixed : Boolean = true
@@ -40,8 +53,6 @@ case class Block(var kind:Int) {
     }
 
     def draw(g:Graphics, x:Int, y:Int) : Unit = {
-      g.clearRect(x, y, width, height)
-
       g.setColor(color)
       g.fillRect(      x+2,        y+2,  width-4,         2)
       g.fillRect(      x+2,        y+2,        2,  height-4)
@@ -50,8 +61,15 @@ case class Block(var kind:Int) {
       g.fillRect(      x+6,        y+6, width-12, height-12)
     }
 
-
   }
+
+  override def equals(that:Any) = that match {
+    case null => false
+    case b:Block => this.kind==b.kind
+    case _ => false
+  }
+
+  override def clone = super.clone.asInstanceOf[Block]
 
   override def toString = this match {
     case Block.None => "None"
@@ -67,24 +85,22 @@ case class Block(var kind:Int) {
 
 }
 
-class GameField(val width:Int, val height:Int, val kindCount:Int) {
-  val random = new Random
-  val _blocks : Array[Array[Block]] = Array.ofDim[Block](width,height*2)
-  for (w <- 0 until width; h <- 0 until height*2) {
+class GameField(val row:Int, val column:Int, val kindCount:Int) {
+  val _blocks : Array[Array[Block]] = Array.ofDim[Block](row,column*2)
+  for (w <- 0 until row; h <- 0 until column*2) {
     if (w>=2 || h>=2) {
       var flag = true
       while (flag) {
-        val c = random.nextInt(kindCount) + 1
-        val hflag = w<2 || !(_blocks(w-1)(h).kind==c && _blocks(w-2)(h).kind==c)
-        val vflag = h<2 || !(_blocks(w)(h-1).kind==c && _blocks(w)(h-2).kind==c)
+        val block = Block.random(kindCount)
+        val hflag = w<2 || !(_blocks(w-1)(h)==block && _blocks(w-2)(h)==block)
+        val vflag = h<2 || !(_blocks(w)(h-1)==block && _blocks(w)(h-2)==block)
         if (hflag && vflag) {
-          _blocks(w)(h) = new Block(c)
+          _blocks(w)(h) = block
           flag = false
         }
       }
     } else {
-      val c = random.nextInt(kindCount) + 1
-      _blocks(w)(h) = new Block(c)
+      _blocks(w)(h) = Block.random(kindCount)
     }
   }
 
@@ -94,17 +110,56 @@ class GameField(val width:Int, val height:Int, val kindCount:Int) {
   def setBlock(bp:Point,b:Block) = _blocks(bp.x)(bp.y) = b
 
   def fallColumn(bp:Point) = {
-    val column = _blocks(bp.x).toList
-    val fallen = column.takeWhile(_!=Block.None) ++ column.dropWhile(_!=Block.None).dropWhile(_==Block.None)
+    val line = _blocks(bp.x).toList
+    val fallen = line.takeWhile(_!=Block.None) ++ line.dropWhile(_!=Block.None).dropWhile(_==Block.None)
     val len = fallen.length
-    val shortage = height * 2 - len
-    val full = Array.tabulate[Block](shortage) { (_) => new Block(random.nextInt(kindCount) + 1) }.toList ++ fallen
+    val shortage = column * 2 - len
+    val full = Array.tabulate[Block](shortage) { (_) => Block.random(kindCount) }.toList ++ fallen
 
     for (b <- full) b.fixed = true
     _blocks(bp.x) = full.toArray
 
   }
 
+
+  val look = new Look {
+
+    val size = new Dimension(row * Block.look.width, column * Block.look.height)
+
+    def bpos2pos(bpos:Point) : Point = {
+      val width = Block.look.width
+      val height = Block.look.height
+      val x = bpos.x * width
+      val y = (bpos.y-column) * height
+      Point(x,y)
+    }
+
+    def pos2bpos(pos:Point) : Point = {
+      val width = Block.look.width
+      val height = Block.look.height
+      val fieldWidth = row * width
+      val fieldHeight = column * height
+      if (pos.x < 0 || fieldWidth <= pos.x || pos.y < 0 || fieldHeight <= pos.y) {
+        null
+      } else {
+        val bx = pos.x / width
+        val by = (pos.y + fieldHeight) / height
+        Point(bx,by)
+      }
+    }
+
+    def draw(g:Graphics, x:Int, y:Int) : Unit = {
+      for (bx <- 0 until row; by<- column until column*2) {
+        val block = blocks(bx,by)
+        if (block.fixed && block!=Block.None) {
+          val bpos = Point(bx,by)
+          val pos = bpos2pos(bpos)
+          block.look.draw(g, x+pos.x, y+pos.y)
+        }
+      }
+    }
+
+  }
 
 
   val events = new ListBuffer[Event]
@@ -127,6 +182,8 @@ class GameUI(val field:GameField) extends GeoBlockUI {
   val fieldWidth = 320
   val fieldHeight = 320
 
+  def bpos2pos(bpos:Point) = field.look.bpos2pos(bpos)
+  def pos2bpos(pos:Point) = field.look.pos2bpos(pos)
 
 
   var focused : Point = _
@@ -154,19 +211,10 @@ class GameUI(val field:GameField) extends GeoBlockUI {
     g.fillRect(0, 0, width, height)
 
     val fieldGraphics = g.create(fieldOffsetX, fieldOffsetY, fieldWidth, fieldHeight)
-    paintField(fieldGraphics)
+    field.look.draw(fieldGraphics, 0, 0)
 
     for (e <- field.events) e.paint(fieldGraphics)
 
-  }
-
-  def paintField(g:Graphics) = {
-    for (bx <- 0 until field.width) {
-      for (by<- field.height until field.height*2) {
-        val block = field.blocks(bx,by)
-        if (block.fixed && block!=Block.None) paintFixedBlock(g, bx, by)
-      }
-    }
   }
 
   def paintFixedBlock(g:Graphics, bx:Int, by:Int) = {
@@ -191,29 +239,6 @@ class GameUI(val field:GameField) extends GeoBlockUI {
   }
 
 
-  def bpos2pos(bpos:Point) : Point = {
-    val width = Block.None.look.width
-    val height = Block.None.look.height
-    val x = bpos.x * width
-    val y = (bpos.y-field.height) * height
-    Point(x,y)
-  }
-
-  def pos2bpos(pos:Point) : Point = {
-    val width = Block.None.look.width
-    val height = Block.None.look.height
-    val fieldWidth = field.width * width
-    val fieldHeight = field.height * height
-    if (pos.x < 0 || fieldWidth <= pos.x || pos.y < 0 || fieldHeight <= pos.y) {
-      null
-    } else {
-      val bx = pos.x / width
-      val by = (pos.y + fieldHeight) / height
-      Point(bx,by)
-    }
-  }
-
-
   class ChangeEvent(val src:Point, val dst:Point, rechange:Boolean=true) extends Event {
     field.blocks(src).fixed = false
     field.blocks(dst).fixed = false
@@ -229,7 +254,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
 
       def checkBlock(pos:Point, vec:Point) : ListBuffer[Point] = {
         val newPos = pos + vec
-        if (newPos.x<0 || field.width <= newPos.x || newPos.y < field.height || field.height*2 <= newPos.y) {
+        if (newPos.x<0 || field.row <= newPos.x || newPos.y < field.column || field.column*2 <= newPos.y) {
           ListBuffer.empty[Point]
         } else if (field.blocks(newPos).kind!=kind) {
           ListBuffer.empty[Point]
