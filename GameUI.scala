@@ -164,6 +164,193 @@ class GameField(val row:Int, val column:Int, val kindCount:Int) {
 
   val events = new ListBuffer[Event]
 
+  def changeBlock(src:Point, dst:Point) = events += new ChangeEvent(src, dst)
+
+
+  class ChangeEvent(val src:Point, val dst:Point, rechange:Boolean=true) extends Event {
+    blocks(src).fixed = false
+    blocks(dst).fixed = false
+
+    val vx = dst.x - src.x
+    val vy = dst.y - src.y
+  
+    var counter = 0
+    val countMax = 20
+
+    def getLinedBlocks(pos:Point) : List[Point] = {
+      val kind = blocks(pos).kind
+
+      def checkBlock(pos:Point, vec:Point) : ListBuffer[Point] = {
+        val newPos = pos + vec
+        if (newPos.x<0 || row <= newPos.x || newPos.y < column || column*2 <= newPos.y) {
+          ListBuffer.empty[Point]
+        } else if (blocks(newPos).kind!=kind) {
+          ListBuffer.empty[Point]
+        } else {
+          checkBlock(newPos, vec) += newPos
+        }
+      }
+
+
+      val varLine = (checkBlock(pos, Point(0,1)) ++ checkBlock(pos, Point(0,-1))).toList
+      val horLine = (checkBlock(pos, Point(1,0)) ++ checkBlock(pos, Point(-1,0))).toList
+
+      if (varLine.size>=2 && horLine.size>=2) {
+        varLine ++ horLine ++ List(pos)
+      } else if (varLine.size>=2) {
+        varLine ++ List(pos)
+      } else if (horLine.size>=2) {
+        horLine ++ List(pos)
+      } else {
+        List.empty[Point]
+      }
+    }
+
+    def elapsed(time:Float) = {
+      counter += 1
+    }
+  
+    def ended : Boolean = {
+      if (counter>=countMax) {
+        // change blocks
+        val temp = blocks(src)
+        setBlock(src, blocks(dst))
+        setBlock(dst, temp)
+        
+        val linedBlocks = (getLinedBlocks(src) ++ getLinedBlocks(dst)).distinct
+        
+        if (!rechange) {
+          // fix blocks
+          blocks(src).fixed = true
+          blocks(dst).fixed = true
+        } else if (!linedBlocks.isEmpty) {
+          blocks(src).fixed = true
+          blocks(dst).fixed = true
+          events += new EraseEvent(linedBlocks)
+        } else if (!linedBlocks.isEmpty) {
+        } else {
+          events += new ChangeEvent(src, dst, false)
+        }
+
+
+        true
+      } else {
+        false
+      }
+    }
+  
+    def paint(g:Graphics) : Unit = {
+      paintDst(g)
+      paintSrc(g)
+    }
+
+    private def paintSrc(g:Graphics) = {
+      val bx = src.x
+      val by = src.y
+      val block = blocks(bx,by)
+      assert(block!=Block.None)
+      val offset = (1.0 * counter / countMax)
+      val pos = look.bpos2pos(Point(bx,by))
+      val w = block.look.width
+      val h = block.look.height
+      val x = pos.x + (offset * w * vx).toInt
+      val y = pos.y + (offset * h * vy).toInt
+      block.look.draw(g, x, y)
+    }
+
+    private def paintDst(g:Graphics) = {
+      val bx = dst.x
+      val by = dst.y
+      val block = blocks(bx,by)
+      assert(block!=Block.None)
+      val offset = - (1.0 * counter / countMax)
+      val pos = look.bpos2pos(Point(bx,by))
+      val w = block.look.width
+      val h = block.look.height
+      val x = pos.x + (offset * w * vx).toInt
+      val y = pos.y + (offset * h * vy).toInt
+      block.look.draw(g, x, y)
+    }
+  
+  }
+
+
+  class EraseEvent(targets:List[Point]) extends Event {
+
+    for (t <- targets) {
+      val block = Block.None
+      block.fixed = false
+      setBlock(t, block)
+    }
+
+    var bottoms = targets.filter { (p:Point) =>
+      val above = p - Point(0,1)
+      if (above.y < 0) {
+        false
+      } else {
+        blocks(above)!=Block.None
+      }
+    }.map { (p:Point) =>
+      p - Point(0,1)
+    }
+
+    for (bp <- fallingBlocks(bottoms)) blocks(bp).fixed = false
+
+    def fallingBlocks(bottomList:List[Point]) : List[Point] = {
+      bottomList.flatMap { (p:Point) =>
+        val buffer = new ListBuffer[Point]
+        var pos = p
+        while (pos.y >= 0 && blocks(pos)!=Block.None) {
+          buffer += pos
+          pos = pos - Point(0,1)
+        }
+        buffer.toList
+      }.toList
+    }
+
+    var counter = 0
+
+    def offset = counter * counter / 4
+
+    def elapsed(time:Float) : Unit = {
+      counter += 1
+    }
+
+    def ended : Boolean = {
+      val landings = bottoms.filter { (bp:Point) =>
+        val pos = look.bpos2pos(bp+Point(0,1))
+        val fallpos = pos + Point(0, offset)
+        val fallbpos = look.pos2bpos(fallpos)
+        if (fallbpos==null || blocks(fallbpos)!=Block.None) true else false
+      }
+      for (p <- landings) fallColumn(p)
+      bottoms = bottoms.filterNot(landings.contains)
+      bottoms.isEmpty
+    }
+
+    def paint(g:Graphics) : Unit = {
+      for (p <- fallingBlocks(bottoms)) {
+        paintFallingBlock(g, p.x, p.y)
+      }
+    }
+
+    def paintFallingBlock(g:Graphics, bx:Int, by:Int) = {
+      val block = blocks(bx,by)
+      assert(block!=Block.None)
+      val pos = look.bpos2pos(Point(bx,by))
+      val x = pos.x
+      val y = pos.y + offset
+      val w = block.look.width
+      val h = block.look.height
+      block.look.draw(g, x, y)
+    }
+
+  }
+
+  
+
+
+
 
 }
 
@@ -239,191 +426,6 @@ class GameUI(val field:GameField) extends GeoBlockUI {
   }
 
 
-  class ChangeEvent(val src:Point, val dst:Point, rechange:Boolean=true) extends Event {
-    field.blocks(src).fixed = false
-    field.blocks(dst).fixed = false
-
-    val vx = dst.x - src.x
-    val vy = dst.y - src.y
-  
-    var counter = 0
-    val countMax = 20
-
-    def getLinedBlocks(pos:Point) : List[Point] = {
-      val kind = field.blocks(pos).kind
-
-      def checkBlock(pos:Point, vec:Point) : ListBuffer[Point] = {
-        val newPos = pos + vec
-        if (newPos.x<0 || field.row <= newPos.x || newPos.y < field.column || field.column*2 <= newPos.y) {
-          ListBuffer.empty[Point]
-        } else if (field.blocks(newPos).kind!=kind) {
-          ListBuffer.empty[Point]
-        } else {
-          checkBlock(newPos, vec) += newPos
-        }
-      }
-
-
-      val varLine = (checkBlock(pos, Point(0,1)) ++ checkBlock(pos, Point(0,-1))).toList
-      val horLine = (checkBlock(pos, Point(1,0)) ++ checkBlock(pos, Point(-1,0))).toList
-
-      if (varLine.size>=2 && horLine.size>=2) {
-        varLine ++ horLine ++ List(pos)
-      } else if (varLine.size>=2) {
-        varLine ++ List(pos)
-      } else if (horLine.size>=2) {
-        horLine ++ List(pos)
-      } else {
-        List.empty[Point]
-      }
-    }
-
-    def elapsed(time:Float) = {
-      counter += 1
-    }
-  
-    def ended : Boolean = {
-      if (counter>=countMax) {
-        // change blocks
-        val temp = field.blocks(src)
-        field.setBlock(src, field.blocks(dst))
-        field.setBlock(dst, temp)
-        
-        val linedBlocks = (getLinedBlocks(src) ++ getLinedBlocks(dst)).distinct
-        
-        if (!rechange) {
-          // fix blocks
-          field.blocks(src).fixed = true
-          field.blocks(dst).fixed = true
-        } else if (!linedBlocks.isEmpty) {
-          field.blocks(src).fixed = true
-          field.blocks(dst).fixed = true
-          field.events += new EraseEvent(linedBlocks)
-        } else if (!linedBlocks.isEmpty) {
-        } else {
-          field.events += new ChangeEvent(src, dst, false)
-        }
-
-
-        true
-      } else {
-        false
-      }
-    }
-  
-    def paint(g:Graphics) : Unit = {
-      paintDst(g)
-      paintSrc(g)
-    }
-
-    private def paintSrc(g:Graphics) = {
-      val bx = src.x
-      val by = src.y
-      val block = field.blocks(bx,by)
-      assert(block!=Block.None)
-      val offset = (1.0 * counter / countMax)
-      val pos = bpos2pos(Point(bx,by))
-      val w = block.look.width
-      val h = block.look.height
-      val x = pos.x + (offset * w * vx).toInt
-      val y = pos.y + (offset * h * vy).toInt
-      val color = block.look.color
-      paintBlock(g, color, x, y, w, h)
-    }
-
-    private def paintDst(g:Graphics) = {
-      val bx = dst.x
-      val by = dst.y
-      val block = field.blocks(bx,by)
-      assert(block!=Block.None)
-      val offset = - (1.0 * counter / countMax)
-      val pos = bpos2pos(Point(bx,by))
-      val w = block.look.width
-      val h = block.look.height
-      val x = pos.x + (offset * w * vx).toInt
-      val y = pos.y + (offset * h * vy).toInt
-      val color = block.look.color
-      paintBlock(g, color, x, y, w, h)
-    }
-  
-  }
-
-  class EraseEvent(targets:List[Point]) extends Event {
-
-    for (t <- targets) {
-      val block = Block.None
-      block.fixed = false
-      field.setBlock(t, block)
-    }
-
-    var bottoms = targets.filter { (p:Point) =>
-      val above = p - Point(0,1)
-      if (above.y < 0) {
-        false
-      } else {
-        field.blocks(above)!=Block.None
-      }
-    }.map { (p:Point) =>
-      p - Point(0,1)
-    }
-
-    for (bp <- fallingBlocks(bottoms)) field.blocks(bp).fixed = false
-
-    def fallingBlocks(bottomList:List[Point]) : List[Point] = {
-      bottomList.flatMap { (p:Point) =>
-        val buffer = new ListBuffer[Point]
-        var pos = p
-        while (pos.y >= 0 && field.blocks(pos)!=Block.None) {
-          buffer += pos
-          pos = pos - Point(0,1)
-        }
-        buffer.toList
-      }.toList
-    }
-
-    var counter = 0
-
-    def offset = counter * counter / 4
-
-    def elapsed(time:Float) : Unit = {
-      counter += 1
-    }
-
-    def ended : Boolean = {
-      val landings = bottoms.filter { (bp:Point) =>
-        val pos = bpos2pos(bp+Point(0,1))
-        val fallpos = pos + Point(0, offset)
-        val fallbpos = pos2bpos(fallpos)
-        if (fallbpos==null || field.blocks(fallbpos)!=Block.None) true else false
-      }
-      for (p <- landings) field.fallColumn(p)
-      bottoms = bottoms.filterNot(landings.contains)
-      bottoms.isEmpty
-    }
-
-    def paint(g:Graphics) : Unit = {
-      for (p <- fallingBlocks(bottoms)) {
-        paintFallingBlock(g, p.x, p.y)
-      }
-    }
-
-    def paintFallingBlock(g:Graphics, bx:Int, by:Int) = {
-      val block = field.blocks(bx,by)
-      assert(block!=Block.None)
-      val pos = bpos2pos(Point(bx,by))
-      val x = pos.x
-      val y = pos.y + offset
-      val w = block.look.width
-      val h = block.look.height
-      val color = block.look.color
-      paintBlock(g, color, x, y, w, h)
-    }
-
-  }
-
-  
-
-
   def input(ie:InputEvent) : Unit = {
     ie match {
       case MousePressed(source, point, modifiers, clicks, triggersPopup) => {
@@ -447,7 +449,7 @@ class GameUI(val field:GameField) extends GeoBlockUI {
           val diffY = abs(bpos.y-focused.y)
           val block = field.blocks(bpos)
           if (diffX+diffY==1 && block.fixed && block!=Block.None) {
-            field.events += new ChangeEvent(focused, bpos)
+            field.changeBlock(focused, bpos)
           }
           focused = null
         }
@@ -457,5 +459,3 @@ class GameUI(val field:GameField) extends GeoBlockUI {
   }
 
 }
-
-
